@@ -1,0 +1,16 @@
+{
+  "name": "autobattler-monorepo",
+  "private": true,
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "build": "npm run -w server build && npm run -w client build",
+    "dev:server": "npm run -w server dev",
+    "dev:client": "npm run -w client dev",
+    "lint": "npm run -w server build && npm run -w client build",
+    "docker:dev": "docker compose up --build",
+    "docker:prod": "docker compose -f docker-compose.prod.yml up --build"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "autobattler-client",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "sprites:normalize": "python3 scripts/normalize_sora_sprites.py"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0",
+    "socket.io-client": "^4.7.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}
