@@ -70,6 +70,14 @@ label {
   color: var(--subtle);
 }
 
+.input-readonly {
+  opacity: 0.9;
+  border-color: rgba(95, 171, 220, 0.5);
+  background: rgba(24, 45, 62, 0.78);
+  color: #d8e9f7;
+  cursor: not-allowed;
+}
+
 input,
 select,
 button {
@@ -115,6 +123,10 @@ button.secondary {
   gap: 8px;
 }
 
+#accept-btn {
+  margin-top: 2px;
+}
+
 ul,
 ol {
   padding-left: 20px;
@@ -124,6 +136,35 @@ ol {
 
 li {
   margin: 6px 0;
+}
+
+.lobby-room-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#lobby-room {
+  margin: 0;
+}
+
+#copy-link-btn {
+  width: auto;
+  margin-top: 0;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.lobby-share-url {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  color: #cfe6fa;
+  border: 1px dashed rgba(125, 214, 255, 0.25);
+  border-radius: 8px;
+  padding: 6px 8px;
+  word-break: break-all;
+  background: rgba(9, 22, 32, 0.55);
 }
 
 .hidden {
@@ -370,6 +411,14 @@ li {
   white-space: nowrap;
 }
 
+.stats-hp-main {
+  color: #94f7be;
+}
+
+.stats-hp-shield {
+  color: #7dd3fc;
+}
+
 .stats-hp-track {
   margin-top: 6px;
   height: 8px;
@@ -423,14 +472,28 @@ li {
 }
 
 .item-chip {
-  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
   font-weight: 700;
   border-radius: 999px;
-  padding: 3px 8px;
-  color: #cfe7ff;
+  padding: 2px 7px 2px 5px;
+  color: #dbeeff;
   border: 1px solid rgba(146, 180, 219, 0.3);
   background: rgba(18, 35, 49, 0.8);
   cursor: help;
+}
+
+.item-chip .sprite-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.item-chip-count {
+  min-width: 14px;
+  text-align: center;
+  line-height: 1;
 }
 
 .legend {
@@ -467,31 +530,51 @@ li {
 
 .legend-list li {
   margin: 6px 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
   font-size: 12px;
   color: #d3e3f2;
   line-height: 1.28;
 }
 
-.swatch {
+.sprite-icon {
   display: inline-block;
-  width: 11px;
-  height: 11px;
-  border-radius: 3px;
-  margin-right: 7px;
-  vertical-align: middle;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  width: 16px;
+  height: 16px;
+  image-rendering: pixelated;
+  background-repeat: no-repeat;
+  filter: drop-shadow(0 0 4px rgba(2, 8, 12, 0.65));
+  flex: 0 0 auto;
 }
 
-.swatch.sorceress { background: #30c4a8; }
-.swatch.paladin { background: #f3c34d; }
-.swatch.barbarian { background: #da4f45; }
-.swatch.sword { background: #ffa54d; }
-.swatch.boots { background: #60b6ff; }
-.swatch.amulet { background: #c084fc; }
-.swatch.armor { background: #9ca3af; }
-.swatch.blessing { background: #34d399; }
-.swatch.fire { background: #ff4d3a; }
-.swatch.meteor { background: #ffc145; }
+.sprite-character {
+  background-image: url('/sprites/characters_sheet_compact.png');
+  background-size: 160px 48px;
+}
+
+.sprite-character.sprite-character-barbarian { background-position: 0 0; }
+.sprite-character.sprite-character-paladin { background-position: 0 -16px; }
+.sprite-character.sprite-character-sorceress { background-position: 0 -32px; }
+
+.sprite-item {
+  background-image: url('/sprites/items_sheet_compact.png');
+  background-size: 80px 16px;
+}
+
+.sprite-item.sprite-item-sword { background-position: 0 0; }
+.sprite-item.sprite-item-boots { background-position: -16px 0; }
+.sprite-item.sprite-item-amulet { background-position: -32px 0; }
+.sprite-item.sprite-item-armor { background-position: -48px 0; }
+.sprite-item.sprite-item-blessing { background-position: -64px 0; }
+
+.sprite-hazard {
+  background-image: url('/sprites/hazards_sheet_compact.png');
+  background-size: 256px 32px;
+}
+
+.sprite-hazard.sprite-hazard-meteor { background-position: -32px 0; }
+.sprite-hazard.sprite-hazard-fire { background-position: -128px 0; }
 
 .stats-row.item-pickup-highlight {
   border-color: rgba(77, 255, 196, 0.5);
@@ -530,6 +613,15 @@ li {
 
   .row {
     grid-template-columns: 1fr;
+  }
+
+  .lobby-room-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #copy-link-btn {
+    width: 100%;
   }
 
   .stats-top {

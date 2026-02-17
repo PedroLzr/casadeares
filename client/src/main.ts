@@ -18,6 +18,7 @@ const resolvedServerUrl = resolveServerUrl(serverUrl);
 const socket: Socket = io(resolvedServerUrl, {
   transports: ['websocket', 'polling']
 });
+const ROOM_QUERY_PARAM = 'room';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
@@ -42,19 +43,24 @@ app.innerHTML = `
       </select>
     </label>
 
-    <label>Room ID (solo para unirse)
+    <label id="room-label">Room ID (solo para unirse)
       <input id="room-input" type="text" maxlength="6" placeholder="ABC123" />
     </label>
 
-    <div class="row">
+    <div id="home-actions" class="row">
       <button id="create-btn">Crear sala</button>
       <button id="join-btn" class="secondary">Unirse</button>
     </div>
+    <button id="accept-btn" class="secondary hidden">Aceptar</button>
   </section>
 
   <section id="lobby-panel" class="panel hidden">
     <h2>Lobby</h2>
-    <p id="lobby-room"></p>
+    <div id="lobby-room-row" class="lobby-room-row">
+      <p id="lobby-room"></p>
+      <button id="copy-link-btn" class="secondary">Copiar enlace</button>
+    </div>
+    <p id="lobby-share-url" class="lobby-share-url"></p>
     <ul id="lobby-players"></ul>
     <button id="start-btn" class="hidden">Empezar batalla</button>
   </section>
@@ -75,27 +81,27 @@ app.innerHTML = `
       <div class="legend-section">
         <h4>Clases</h4>
         <ul class="legend-list">
-          <li><span class="swatch sorceress"></span><strong>Hechicera</strong>: teletransporte tras 1s continuo en fuego.</li>
-          <li><span class="swatch paladin"></span><strong>Paladín</strong>: al bajar a 20% o menos, se cura a 80% (1 vez).</li>
-          <li><span class="swatch barbarian"></span><strong>Bárbaro</strong>: primer daño activa escudo extra de 50 HP.</li>
+          <li><span class="sprite-icon sprite-character sprite-character-sorceress"></span><span><strong>Hechicera</strong>: teletransporte tras 1s continuo en fuego.</span></li>
+          <li><span class="sprite-icon sprite-character sprite-character-paladin"></span><span><strong>Paladín</strong>: al bajar a 20% o menos, se cura a 80% (1 vez).</span></li>
+          <li><span class="sprite-icon sprite-character sprite-character-barbarian"></span><span><strong>Bárbaro</strong>: primer daño activa escudo extra de 50 HP.</span></li>
         </ul>
       </div>
       <div class="legend-section">
         <h4>Objetos</h4>
         <ul class="legend-list">
-          <li><span class="swatch sword"></span><strong>Espada</strong>: aumenta el daño de ataque.</li>
-          <li><span class="swatch boots"></span><strong>Botas</strong>: aumenta la velocidad de movimiento.</li>
-          <li><span class="swatch amulet"></span><strong>Amuleto</strong>: reduce el cooldown entre ataques.</li>
-          <li><span class="swatch armor"></span><strong>Coraza</strong>: aumenta la vida máxima en +20.</li>
-          <li><span class="swatch blessing"></span><strong>Bendición</strong>: inmunidad total al daño del fuego.</li>
+          <li><span class="sprite-icon sprite-item sprite-item-sword"></span><span><strong>Espada</strong>: aumenta el daño de ataque.</span></li>
+          <li><span class="sprite-icon sprite-item sprite-item-boots"></span><span><strong>Botas</strong>: aumenta la velocidad de movimiento.</span></li>
+          <li><span class="sprite-icon sprite-item sprite-item-amulet"></span><span><strong>Amuleto</strong>: reduce el cooldown entre ataques.</span></li>
+          <li><span class="sprite-icon sprite-item sprite-item-armor"></span><span><strong>Coraza</strong>: aumenta la vida máxima en +20.</span></li>
+          <li><span class="sprite-icon sprite-item sprite-item-blessing"></span><span><strong>Bendición</strong>: inmunidad total al daño del fuego.</span></li>
         </ul>
       </div>
       <div class="legend-section">
         <h4>Peligros</h4>
         <ul class="legend-list">
-          <li><span class="swatch fire"></span><strong>Fuego</strong>: daño por tick mientras estés dentro.</li>
-          <li><span class="swatch meteor"></span><strong>Meteorito</strong>: cae en área cuadrada tras un breve aviso visual.</li>
-          <li><span class="swatch fire"></span><strong>Cierre del mapa</strong>: el borde se convierte en fuego progresivamente y te obliga al centro.</li>
+          <li><span class="sprite-icon sprite-hazard sprite-hazard-fire"></span><span><strong>Fuego</strong>: daño por tick mientras estés dentro.</span></li>
+          <li><span class="sprite-icon sprite-hazard sprite-hazard-meteor"></span><span><strong>Meteorito</strong>: cae en área cuadrada tras un breve aviso visual.</span></li>
+          <li><span class="sprite-icon sprite-hazard sprite-hazard-fire"></span><span><strong>Cierre del mapa</strong>: el borde se convierte en fuego progresivamente y te obliga al centro.</span></li>
         </ul>
       </div>
     </div>
@@ -113,11 +119,16 @@ const leaderboardPanel = must<HTMLElement>('#leaderboard-panel');
 const nameInput = must<HTMLInputElement>('#name-input');
 const classSelect = must<HTMLSelectElement>('#class-select');
 const roomInput = must<HTMLInputElement>('#room-input');
+const roomLabel = must<HTMLLabelElement>('#room-label');
+const homeActions = must<HTMLDivElement>('#home-actions');
 const createBtn = must<HTMLButtonElement>('#create-btn');
 const joinBtn = must<HTMLButtonElement>('#join-btn');
+const acceptBtn = must<HTMLButtonElement>('#accept-btn');
 const startBtn = must<HTMLButtonElement>('#start-btn');
 const exitBtn = must<HTMLButtonElement>('#exit-btn');
 const lobbyRoom = must<HTMLParagraphElement>('#lobby-room');
+const lobbyShareUrl = must<HTMLParagraphElement>('#lobby-share-url');
+const copyLinkBtn = must<HTMLButtonElement>('#copy-link-btn');
 const lobbyPlayers = must<HTMLUListElement>('#lobby-players');
 const resultsList = must<HTMLOListElement>('#results-list');
 const leaderboardList = must<HTMLUListElement>('#leaderboard-list');
@@ -125,6 +136,7 @@ const leaderboardList = must<HTMLUListElement>('#leaderboard-list');
 let renderer: GameRenderer | null = null;
 let receivedFirstSnapshot = false;
 let toastTimeout: number | null = null;
+let currentShareUrl: string | null = null;
 const highlightBySocketId = new Map<string, number>();
 
 const savedName = localStorage.getItem('player_name');
@@ -134,6 +146,11 @@ if (savedName) {
 const savedClass = localStorage.getItem('player_class');
 if (savedClass) {
   classSelect.value = savedClass;
+}
+const roomFromUrl = getRoomIdFromQueryParam();
+if (roomFromUrl) {
+  roomInput.value = roomFromUrl;
+  enableJoinViaLinkMode(roomFromUrl);
 }
 
 createBtn.addEventListener('click', () => {
@@ -157,6 +174,29 @@ createBtn.addEventListener('click', () => {
 });
 
 joinBtn.addEventListener('click', () => {
+  submitJoin();
+});
+
+acceptBtn.addEventListener('click', () => {
+  submitJoin();
+});
+
+copyLinkBtn.addEventListener('click', async () => {
+  if (!currentShareUrl) {
+    notify('No hay enlace de sala disponible todavía.');
+    return;
+  }
+
+  const copied = await copyTextToClipboard(currentShareUrl);
+  if (!copied) {
+    notify('No se pudo copiar el enlace automáticamente.');
+    return;
+  }
+
+  notify('Enlace de sala copiado.');
+});
+
+function submitJoin(): void {
   if (!socket.connected) {
     notify('Sin conexión con el servidor. Revisa red/SSL y recarga.');
     return;
@@ -181,7 +221,7 @@ joinBtn.addEventListener('click', () => {
     name: playerName,
     class: selectedClass
   });
-});
+}
 
 startBtn.addEventListener('click', () => {
   if (!socket.connected) {
@@ -196,6 +236,7 @@ exitBtn.addEventListener('click', () => {
   renderer?.destroy();
   renderer = null;
   socket.disconnect();
+  removeRoomQueryParam();
   window.location.reload();
 });
 
@@ -248,7 +289,10 @@ socket.on('disconnect', (reason) => {
 });
 
 function renderLobby(payload: LobbyStatePayload): void {
+  syncRoomQueryParam(payload.roomId);
   lobbyRoom.textContent = `Sala: ${payload.roomId}`;
+  currentShareUrl = buildShareUrl(payload.roomId);
+  lobbyShareUrl.textContent = currentShareUrl;
   lobbyPlayers.innerHTML = '';
 
   const selfId = socket.id;
@@ -428,7 +472,16 @@ function renderLeaderboard(players: SnapshotPlayer[]): void {
 
     const hpText = document.createElement('span');
     hpText.className = 'stats-hp-text';
-    hpText.textContent = shield > 0 ? `HP ${hp}/${hpMax} +${shield}S` : `HP ${hp}/${hpMax}`;
+    const hpMain = document.createElement('span');
+    hpMain.className = 'stats-hp-main';
+    hpMain.textContent = `HP ${hp}/${hpMax}`;
+    hpText.appendChild(hpMain);
+    if (shield > 0) {
+      const hpShield = document.createElement('span');
+      hpShield.className = 'stats-hp-shield';
+      hpShield.textContent = ` (+${shield})`;
+      hpText.appendChild(hpShield);
+    }
 
     top.appendChild(rank);
     top.appendChild(identity);
@@ -449,11 +502,11 @@ function renderLeaderboard(players: SnapshotPlayer[]): void {
 
     const items = document.createElement('div');
     items.className = 'stats-items';
-    items.appendChild(itemChip('SW', player.swords));
-    items.appendChild(itemChip('BT', player.boots));
-    items.appendChild(itemChip('AM', player.amulets));
-    items.appendChild(itemChip('CZ', player.armors));
-    items.appendChild(itemChip('BD', player.blessings));
+    items.appendChild(itemChip('sword', player.swords));
+    items.appendChild(itemChip('boots', player.boots));
+    items.appendChild(itemChip('amulet', player.amulets));
+    items.appendChild(itemChip('armor', player.armors));
+    items.appendChild(itemChip('blessing', player.blessings));
 
     li.appendChild(top);
     li.appendChild(hpTrack);
@@ -481,11 +534,20 @@ function metricChip(label: string, value: string): HTMLDivElement {
   return chip;
 }
 
-function itemChip(label: string, count: number): HTMLDivElement {
+function itemChip(itemType: ItemType, count: number): HTMLDivElement {
   const chip = document.createElement('div');
   chip.className = 'item-chip';
-  chip.textContent = `${label}: ${count}`;
-  chip.title = itemDescription(label);
+  chip.title = itemDescription(itemType);
+
+  const icon = document.createElement('span');
+  icon.className = `sprite-icon sprite-item sprite-item-${itemType}`;
+
+  const countValue = document.createElement('span');
+  countValue.className = 'item-chip-count';
+  countValue.textContent = `${count}`;
+
+  chip.appendChild(icon);
+  chip.appendChild(countValue);
   return chip;
 }
 
@@ -499,17 +561,17 @@ function metricDescription(label: string): string {
   return 'Cooldown entre ataques básicos.';
 }
 
-function itemDescription(label: string): string {
-  if (label === 'SW') {
+function itemDescription(itemType: ItemType): string {
+  if (itemType === 'sword') {
     return 'Espadas recogidas. Cada espada aumenta el daño de ataque.';
   }
-  if (label === 'BT') {
+  if (itemType === 'boots') {
     return 'Botas recogidas. Cada bota aumenta la velocidad de movimiento.';
   }
-  if (label === 'CZ') {
+  if (itemType === 'armor') {
     return 'Corazas recogidas. Cada coraza sube la vida máxima en +20.';
   }
-  if (label === 'BD') {
+  if (itemType === 'blessing') {
     return 'Bendiciones recogidas. Inmunidad total al daño del fuego.';
   }
   return 'Amuletos recogidos. Cada amuleto reduce el cooldown de ataque.';
@@ -619,4 +681,87 @@ function resolveServerUrl(configuredUrl?: string): string | undefined {
   }
 
   return configuredUrl;
+}
+
+function enableJoinViaLinkMode(roomId: string): void {
+  homeActions.classList.add('hidden');
+  acceptBtn.classList.remove('hidden');
+  joinBtn.classList.add('hidden');
+  createBtn.classList.add('hidden');
+  roomInput.value = roomId.toUpperCase();
+  roomInput.readOnly = true;
+  roomInput.classList.add('input-readonly');
+  roomLabel.firstChild && (roomLabel.firstChild.textContent = 'Room ID (enlace compartido)');
+}
+
+function getRoomIdFromQueryParam(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get(ROOM_QUERY_PARAM);
+  if (!raw) {
+    return null;
+  }
+
+  const cleaned = raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+  if (!cleaned) {
+    return null;
+  }
+
+  return cleaned;
+}
+
+function syncRoomQueryParam(roomId: string): void {
+  const params = new URLSearchParams(window.location.search);
+  const current = (params.get(ROOM_QUERY_PARAM) ?? '').toUpperCase();
+  if (current === roomId.toUpperCase()) {
+    return;
+  }
+
+  params.set(ROOM_QUERY_PARAM, roomId.toUpperCase());
+  const query = params.toString();
+  const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
+  window.history.replaceState(null, '', nextUrl);
+}
+
+function removeRoomQueryParam(): void {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has(ROOM_QUERY_PARAM)) {
+    return;
+  }
+
+  params.delete(ROOM_QUERY_PARAM);
+  const query = params.toString();
+  const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
+  window.history.replaceState(null, '', nextUrl);
+}
+
+function buildShareUrl(roomId: string): string {
+  const url = new URL(window.location.href);
+  url.searchParams.set(ROOM_QUERY_PARAM, roomId.toUpperCase());
+  return url.toString();
+}
+
+async function copyTextToClipboard(value: string): Promise<boolean> {
+  try {
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // Fallback below.
+  }
+
+  try {
+    const helper = document.createElement('textarea');
+    helper.value = value;
+    helper.setAttribute('readonly', '');
+    helper.style.position = 'fixed';
+    helper.style.left = '-9999px';
+    document.body.appendChild(helper);
+    helper.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(helper);
+    return ok;
+  } catch {
+    return false;
+  }
 }

@@ -3,6 +3,7 @@ import {
   AMULET_COOLDOWN_REDUCTION_TICKS,
   ATTACK_COOLDOWN_TICKS,
   ATTACK_DAMAGE,
+  ATTACK_KNOCKBACK_ATTACKER_RATIO,
   ATTACK_KNOCKBACK_PX,
   ATTACK_RANGE,
   BARBARIAN_SHIELD,
@@ -40,7 +41,6 @@ import {
   PLAYER_DIAMETER,
   PLAYER_SEPARATION_MIN_PUSH_PX,
   PLAYER_SEPARATION_PUSH_MULTIPLIER,
-  PLAYER_SEPARATION_VISIBLE_GAP_PX,
   PLAYER_RADIUS,
   SNAPSHOT_EVERY_TICKS,
   SORCERESS_FIRE_TELEPORT_TICKS,
@@ -576,10 +576,9 @@ export class GameSimulation {
   private resolvePlayerSeparation(): void {
     this.rebuildSpatialHash();
     const processedPairs = new Set<string>();
-    const targetSeparation = PLAYER_DIAMETER + PLAYER_SEPARATION_VISIBLE_GAP_PX;
 
     for (const player of this.alivePlayers()) {
-      const nearbyIds = this.spatialHash.queryCircle(player.x, player.y, targetSeparation + 2);
+      const nearbyIds = this.spatialHash.queryCircle(player.x, player.y, PLAYER_DIAMETER + 2);
 
       for (const otherId of nearbyIds) {
         if (otherId === player.socketId) {
@@ -604,7 +603,7 @@ export class GameSimulation {
         let dy = other.y - player.y;
         let distance = Math.hypot(dx, dy);
 
-        if (distance >= targetSeparation) {
+        if (distance >= PLAYER_DIAMETER) {
           continue;
         }
 
@@ -615,7 +614,7 @@ export class GameSimulation {
           distance = 1;
         }
 
-        const penetration = targetSeparation - distance;
+        const penetration = PLAYER_DIAMETER - distance;
         const nx = dx / distance;
         const ny = dy / distance;
         const push = Math.max(
@@ -865,10 +864,67 @@ export class GameSimulation {
       x: target.x - attacker.x,
       y: target.y - attacker.y
     });
+    const startDistance = Math.hypot(target.x - attacker.x, target.y - attacker.y);
 
-    target.x += dir.x * ATTACK_KNOCKBACK_PX;
-    target.y += dir.y * ATTACK_KNOCKBACK_PX;
-    this.clampToMap(target);
+    const targetIntent = ATTACK_KNOCKBACK_PX;
+    const attackerIntent = ATTACK_KNOCKBACK_PX * ATTACK_KNOCKBACK_ATTACKER_RATIO;
+
+    this.applyKnockbackWithLateralFallback(target, dir, targetIntent);
+    this.applyKnockbackWithLateralFallback(attacker, { x: -dir.x, y: -dir.y }, attackerIntent);
+
+    const desiredDistance = startDistance + Math.max(1.2, ATTACK_KNOCKBACK_PX * 0.7);
+    const currentDistance = Math.hypot(target.x - attacker.x, target.y - attacker.y);
+    if (currentDistance >= desiredDistance) {
+      return;
+    }
+
+    const extraNeeded = desiredDistance - currentDistance;
+    const extraDir = normalize({
+      x: target.x - attacker.x,
+      y: target.y - attacker.y
+    });
+
+    this.applyKnockbackWithLateralFallback(target, extraDir, extraNeeded * 0.65);
+    this.applyKnockbackWithLateralFallback(attacker, { x: -extraDir.x, y: -extraDir.y }, extraNeeded * 0.35);
+  }
+
+  private applyKnockbackWithLateralFallback(player: SimPlayer, dir: Vec2, amount: number): number {
+    if (amount <= 0) {
+      return 0;
+    }
+
+    const primaryMoved = this.applyClampedDisplacement(
+      player,
+      dir.x * amount,
+      dir.y * amount
+    );
+    if (primaryMoved >= amount * 0.55) {
+      return primaryMoved;
+    }
+
+    const sideAmount = Math.max(0.8, amount * 0.85);
+    const sideX = -dir.y;
+    const sideY = dir.x;
+    const firstSideMoved = this.applyClampedDisplacement(player, sideX * sideAmount, sideY * sideAmount);
+    if (firstSideMoved >= sideAmount * 0.35) {
+      return primaryMoved + firstSideMoved;
+    }
+
+    const secondSideMoved = this.applyClampedDisplacement(
+      player,
+      -sideX * sideAmount,
+      -sideY * sideAmount
+    );
+    return primaryMoved + Math.max(firstSideMoved, secondSideMoved);
+  }
+
+  private applyClampedDisplacement(player: SimPlayer, dx: number, dy: number): number {
+    const beforeX = player.x;
+    const beforeY = player.y;
+    player.x += dx;
+    player.y += dy;
+    this.clampToMap(player);
+    return Math.hypot(player.x - beforeX, player.y - beforeY);
   }
 
   private tryRandomSafeTeleport(player: SimPlayer, attempts: number): boolean {

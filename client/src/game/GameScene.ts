@@ -17,9 +17,15 @@ interface RenderPlayer {
   body: Phaser.GameObjects.Sprite;
   nameText: Phaser.GameObjects.Text;
   hpText: Phaser.GameObjects.Text;
+  hpShieldText: Phaser.GameObjects.Text;
   hpBarBg: Phaser.GameObjects.Rectangle;
   hpBarFill: Phaser.GameObjects.Rectangle;
   lastHp: number;
+  lastX: number;
+  lastY: number;
+  lastAttackCooldownTicks: number;
+  attackPoseUntilMs: number;
+  tintResetEvent: Phaser.Time.TimerEvent | null;
 }
 
 interface DamagePopup {
@@ -51,6 +57,12 @@ const HAZARD_SHEET_KEY = 'hazardsSheet';
 const CHARACTER_FRAMES_PER_CLASS = 10;
 const HP_DISPLAY_DIVISOR = 100;
 const METEOR_MIN_WARNING_TTL = 4;
+const MOVE_ANIMATION_THRESHOLD_PX = 0.2;
+const ATTACK_COOLDOWN_RESET_THRESHOLD = 4;
+const ATTACK_TRIGGER_MIN_COOLDOWN_TICKS = 12;
+const COMBAT_CONTACT_RANGE_PX = 12;
+const COMBAT_JITTER_IDLE_THRESHOLD_PX = 1.1;
+const ATTACK_POSE_MS = 130;
 
 const CLASS_ROW_INDEX: Record<ClassType, number> = {
   barbarian: 0,
@@ -202,19 +214,22 @@ export class GameScene extends Phaser.Scene {
       this.drawMap(state.mapSize, state.cellsPerSide);
     }
 
+    const nearestEnemyDistanceBySocketId = this.computeNearestEnemyDistanceBySocketId(state.players);
     const alivePlayerIds = new Set<string>();
     for (const player of state.players) {
       alivePlayerIds.add(player.socketId);
-      this.upsertPlayer(player);
+      this.upsertPlayer(player, nearestEnemyDistanceBySocketId.get(player.socketId) ?? null);
     }
 
     for (const [socketId, renderPlayer] of this.renderPlayers) {
       if (alivePlayerIds.has(socketId)) {
         continue;
       }
+      renderPlayer.tintResetEvent?.remove(false);
       renderPlayer.body.destroy();
       renderPlayer.nameText.destroy();
       renderPlayer.hpText.destroy();
+      renderPlayer.hpShieldText.destroy();
       renderPlayer.hpBarBg.destroy();
       renderPlayer.hpBarFill.destroy();
       this.renderPlayers.delete(socketId);
@@ -249,14 +264,14 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private upsertPlayer(player: SnapshotPlayer): void {
+  private upsertPlayer(player: SnapshotPlayer, nearestEnemyDistance: number | null): void {
     const existing = this.renderPlayers.get(player.socketId);
     const hpRatio = Phaser.Math.Clamp(player.hp / player.maxHp, 0, 1);
     const hpDisplay = Math.max(0, Math.ceil(player.hp / 100));
     const hpMaxDisplay = Math.max(1, Math.ceil(player.maxHp / 100));
     const shieldDisplay = Math.max(0, Math.ceil(player.shield / 100));
-    const hpLabel = shieldDisplay > 0 ? `${hpDisplay}/${hpMaxDisplay} +${shieldDisplay}S` : `${hpDisplay}/${hpMaxDisplay}`;
-    const hpColor = shieldDisplay > 0 ? '#7dd3fc' : '#94f7be';
+    const hpLabel = `${hpDisplay}/${hpMaxDisplay}`;
+    const shieldLabel = shieldDisplay > 0 ? `(+${shieldDisplay})` : '';
     const bodySize = Math.max(12, Math.round(this.playerSizePx * 1.45));
     const hpBarWidth = Math.max(bodySize + 4, 12);
     const px = Math.round(player.x);
@@ -273,7 +288,7 @@ export class GameScene extends Phaser.Scene {
     if (!existing) {
       const body = this.add.sprite(px, py, CHARACTER_SHEET_KEY, idleFrame);
       body.setDisplaySize(bodySize, bodySize);
-      body.play(walkAnim, true);
+      body.setFrame(idleFrame);
       const nameText = this.add.text(px, nameTextY, player.name, {
         fontFamily: 'Trebuchet MS',
         fontSize: `${this.nameFontPx}px`,
@@ -283,8 +298,16 @@ export class GameScene extends Phaser.Scene {
       const hpText = this.add.text(px, hpTextY, hpLabel, {
         fontFamily: 'Trebuchet MS',
         fontSize: `${this.hpFontPx}px`,
-        color: hpColor
-      }).setOrigin(0.5, 1).setResolution(this.textResolution);
+        color: '#94f7be'
+      }).setOrigin(0, 1).setResolution(this.textResolution);
+
+      const hpShieldText = this.add.text(px, hpTextY, shieldLabel, {
+        fontFamily: 'Trebuchet MS',
+        fontSize: `${this.hpFontPx}px`,
+        color: '#7dd3fc'
+      }).setOrigin(0, 1).setResolution(this.textResolution);
+      hpShieldText.setVisible(shieldDisplay > 0);
+      this.positionHpTexts(hpText, hpShieldText, px, hpTextY);
 
       const hpBarBg = this.add.rectangle(px, hpBarY, hpBarWidth, this.hpBarHeightPx, 0x1f2937).setOrigin(0.5, 0.5);
       const hpBarFill = this.add.rectangle(
@@ -300,25 +323,54 @@ export class GameScene extends Phaser.Scene {
         body,
         nameText,
         hpText,
+        hpShieldText,
         hpBarBg,
         hpBarFill,
-        lastHp: player.hp
+        lastHp: player.hp,
+        lastX: player.x,
+        lastY: player.y,
+        lastAttackCooldownTicks: player.attackCooldownTicks,
+        attackPoseUntilMs: 0,
+        tintResetEvent: null
       });
       return;
     }
 
+    const movedDistance = Math.hypot(player.x - existing.lastX, player.y - existing.lastY);
+    const inCloseCombat = nearestEnemyDistance !== null && nearestEnemyDistance <= COMBAT_CONTACT_RANGE_PX;
+    const nowMs = performance.now();
+    const shouldIdleFromCombat = inCloseCombat && movedDistance < COMBAT_JITTER_IDLE_THRESHOLD_PX;
+    const attackTriggered =
+      player.attackCooldownTicks >= ATTACK_TRIGGER_MIN_COOLDOWN_TICKS &&
+      player.attackCooldownTicks > existing.lastAttackCooldownTicks + ATTACK_COOLDOWN_RESET_THRESHOLD;
+    if (attackTriggered) {
+      existing.attackPoseUntilMs = nowMs + ATTACK_POSE_MS;
+    }
+    const shouldIdleFromAttack = nowMs < existing.attackPoseUntilMs;
+    const isMoving = movedDistance >= MOVE_ANIMATION_THRESHOLD_PX && !shouldIdleFromCombat && !shouldIdleFromAttack;
+
     existing.body.setPosition(px, py);
     existing.body.setDisplaySize(bodySize, bodySize);
-    existing.body.play(walkAnim, true);
+    if (isMoving) {
+      if (existing.body.anims.currentAnim?.key !== walkAnim || !existing.body.anims.isPlaying) {
+        existing.body.play(walkAnim, true);
+      }
+    } else {
+      existing.body.stop();
+      existing.body.setFrame(idleFrame);
+    }
     existing.nameText.setPosition(px, nameTextY);
     existing.nameText.setText(player.name);
     existing.nameText.setFontSize(this.nameFontPx);
     existing.nameText.setResolution(this.textResolution);
-    existing.hpText.setPosition(px, hpTextY);
     existing.hpText.setText(hpLabel);
-    existing.hpText.setColor(hpColor);
     existing.hpText.setFontSize(this.hpFontPx);
     existing.hpText.setResolution(this.textResolution);
+    existing.hpShieldText.setText(shieldLabel);
+    existing.hpShieldText.setFontSize(this.hpFontPx);
+    existing.hpShieldText.setResolution(this.textResolution);
+    existing.hpShieldText.setVisible(shieldDisplay > 0);
+    this.positionHpTexts(existing.hpText, existing.hpShieldText, px, hpTextY);
     existing.hpBarBg.setPosition(px, hpBarY);
     existing.hpBarBg.setSize(hpBarWidth, this.hpBarHeightPx);
     existing.hpBarBg.setDisplaySize(hpBarWidth, this.hpBarHeightPx);
@@ -330,8 +382,18 @@ export class GameScene extends Phaser.Scene {
     if (hpLost > 0) {
       const damageDisplay = Math.max(1, Math.ceil(hpLost / HP_DISPLAY_DIVISOR));
       this.showDamagePopup(player.socketId, px, damageTextY, damageDisplay);
+      this.flashPlayerTint(existing, 0xff6b6b, 130);
     }
+
+    if (attackTriggered) {
+      this.playAttackPulse(px, py);
+      this.flashPlayerTint(existing, 0xffe08a, 90);
+    }
+
     existing.lastHp = player.hp;
+    existing.lastX = player.x;
+    existing.lastY = player.y;
+    existing.lastAttackCooldownTicks = player.attackCooldownTicks;
   }
 
   private upsertHazard(hazard: SnapshotHazard): void {
@@ -498,6 +560,7 @@ export class GameScene extends Phaser.Scene {
     for (const renderPlayer of this.renderPlayers.values()) {
       renderPlayer.nameText.setResolution(this.textResolution);
       renderPlayer.hpText.setResolution(this.textResolution);
+      renderPlayer.hpShieldText.setResolution(this.textResolution);
     }
     for (const popup of this.damagePopups.values()) {
       popup.text.setResolution(this.textResolution);
@@ -596,6 +659,70 @@ export class GameScene extends Phaser.Scene {
         repeat: -1
       });
     }
+  }
+
+  private positionHpTexts(
+    hpText: Phaser.GameObjects.Text,
+    hpShieldText: Phaser.GameObjects.Text,
+    centerX: number,
+    y: number
+  ): void {
+    const showShield = hpShieldText.visible;
+    const gap = showShield ? 4 : 0;
+    const totalWidth = hpText.width + (showShield ? gap + hpShieldText.width : 0);
+    const startX = Math.round(centerX - totalWidth / 2);
+
+    hpText.setPosition(startX, y);
+    hpShieldText.setPosition(startX + hpText.width + gap, y);
+  }
+
+  private playAttackPulse(x: number, y: number): void {
+    const diameter = Math.max(12, Math.round(this.playerSizePx * 1.35));
+    const pulse = this.add.ellipse(x, y, diameter, diameter * 0.74)
+      .setStrokeStyle(2, 0xffc56b, 0.92)
+      .setFillStyle(0xff9f43, 0.2);
+    pulse.setRotation(Math.random() * Math.PI);
+
+    this.tweens.add({
+      targets: pulse,
+      alpha: 0,
+      scaleX: 1.4,
+      scaleY: 1.4,
+      duration: 140,
+      ease: 'Cubic.Out',
+      onComplete: () => pulse.destroy()
+    });
+  }
+
+  private flashPlayerTint(renderPlayer: RenderPlayer, color: number, durationMs: number): void {
+    renderPlayer.tintResetEvent?.remove(false);
+    renderPlayer.body.setTint(color);
+    renderPlayer.tintResetEvent = this.time.delayedCall(durationMs, () => {
+      renderPlayer.body.clearTint();
+      renderPlayer.tintResetEvent = null;
+    });
+  }
+
+  private computeNearestEnemyDistanceBySocketId(players: SnapshotPlayer[]): Map<string, number> {
+    const nearest = new Map<string, number>();
+    for (let i = 0; i < players.length; i += 1) {
+      const a = players[i];
+      let best = Number.POSITIVE_INFINITY;
+      for (let j = 0; j < players.length; j += 1) {
+        if (i === j) {
+          continue;
+        }
+        const b = players[j];
+        const dist = Math.hypot(b.x - a.x, b.y - a.y);
+        if (dist < best) {
+          best = dist;
+        }
+      }
+      if (best < Number.POSITIVE_INFINITY) {
+        nearest.set(a.socketId, best);
+      }
+    }
+    return nearest;
   }
 }
 

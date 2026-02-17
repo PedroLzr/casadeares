@@ -14,5 +14,5 @@
     "rootDir": "src",
     "noEmit": true
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src"]
 }

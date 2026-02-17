@@ -22,7 +22,8 @@ export const DETECTION_RANGE = Math.max(48, Math.round(220 * WORLD_SCALE));
 export const ATTACK_RANGE = Math.max(PLAYER_DIAMETER + 2, Math.round(42 * WORLD_SCALE));
 export const ATTACK_COOLDOWN_TICKS = 30;
 export const WANDER_CHANGE_TICKS = 16;
-export const ATTACK_KNOCKBACK_PX = Math.max(1, Math.min(2, Math.round(8 * WORLD_SCALE)));
+export const ATTACK_KNOCKBACK_PX = Math.max(4, Math.round(20 * WORLD_SCALE));
+export const ATTACK_KNOCKBACK_ATTACKER_RATIO = 0.45;
 export const LOW_HP_TELEPORT_TRIGGER_RATIO = 0.5;
 export const LOW_HP_TELEPORT_MIN_DISTANCE_PX = GRID_CELL_PX * 6;
 export const LOW_HP_TELEPORT_MAX_DISTANCE_PX = GRID_CELL_PX * 10;
@@ -46,7 +47,6 @@ export const FIRE_ESCAPE_MARGIN_PX = Math.max(PLAYER_RADIUS, Math.round(GRID_CEL
 export const WALL_ESCAPE_MARGIN_PX = GRID_CELL_PX;
 export const DANGER_ESCAPE_SPEED_MULTIPLIER = 1.25;
 export const PLAYER_SEPARATION_PUSH_MULTIPLIER = 1.7;
-export const PLAYER_SEPARATION_VISIBLE_GAP_PX = Math.max(3, Math.round(GRID_CELL_PX * 0.4));
 export const PLAYER_SEPARATION_MIN_PUSH_PX = 0.8;
 
 export const BARBARIAN_SHIELD = 5000;
