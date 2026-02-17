@@ -45,6 +45,9 @@ export const SHRINK_MIN_SAFE_CELLS = 8;
 export const FIRE_ESCAPE_MARGIN_PX = Math.max(PLAYER_RADIUS, Math.round(GRID_CELL_PX * 0.4));
 export const WALL_ESCAPE_MARGIN_PX = GRID_CELL_PX;
 export const DANGER_ESCAPE_SPEED_MULTIPLIER = 1.25;
+export const PLAYER_SEPARATION_PUSH_MULTIPLIER = 1.7;
+export const PLAYER_SEPARATION_VISIBLE_GAP_PX = Math.max(3, Math.round(GRID_CELL_PX * 0.4));
+export const PLAYER_SEPARATION_MIN_PUSH_PX = 0.8;
 
 export const BARBARIAN_SHIELD = 5000;
 export const PALADIN_TRIGGER_HP = 2000;

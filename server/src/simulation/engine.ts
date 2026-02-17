@@ -38,6 +38,9 @@ import {
   PALADIN_HEAL_TO_HP,
   PALADIN_TRIGGER_HP,
   PLAYER_DIAMETER,
+  PLAYER_SEPARATION_MIN_PUSH_PX,
+  PLAYER_SEPARATION_PUSH_MULTIPLIER,
+  PLAYER_SEPARATION_VISIBLE_GAP_PX,
   PLAYER_RADIUS,
   SNAPSHOT_EVERY_TICKS,
   SORCERESS_FIRE_TELEPORT_TICKS,
@@ -573,9 +576,10 @@ export class GameSimulation {
   private resolvePlayerSeparation(): void {
     this.rebuildSpatialHash();
     const processedPairs = new Set<string>();
+    const targetSeparation = PLAYER_DIAMETER + PLAYER_SEPARATION_VISIBLE_GAP_PX;
 
     for (const player of this.alivePlayers()) {
-      const nearbyIds = this.spatialHash.queryCircle(player.x, player.y, PLAYER_DIAMETER + 2);
+      const nearbyIds = this.spatialHash.queryCircle(player.x, player.y, targetSeparation + 2);
 
       for (const otherId of nearbyIds) {
         if (otherId === player.socketId) {
@@ -600,7 +604,7 @@ export class GameSimulation {
         let dy = other.y - player.y;
         let distance = Math.hypot(dx, dy);
 
-        if (distance >= PLAYER_DIAMETER) {
+        if (distance >= targetSeparation) {
           continue;
         }
 
@@ -611,10 +615,13 @@ export class GameSimulation {
           distance = 1;
         }
 
-        const penetration = PLAYER_DIAMETER - distance;
+        const penetration = targetSeparation - distance;
         const nx = dx / distance;
         const ny = dy / distance;
-        const push = penetration / 2;
+        const push = Math.max(
+          PLAYER_SEPARATION_MIN_PUSH_PX,
+          (penetration / 2) * PLAYER_SEPARATION_PUSH_MULTIPLIER
+        );
 
         player.x -= nx * push;
         player.y -= ny * push;

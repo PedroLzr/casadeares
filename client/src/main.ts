@@ -14,8 +14,8 @@ import type {
 } from './types';
 
 const serverUrl = import.meta.env.VITE_SERVER_URL as string | undefined;
-const socket: Socket = io(serverUrl, {
-  transports: ['websocket']
+const socket: Socket = io(resolveServerUrl(serverUrl), {
+  transports: ['websocket', 'polling']
 });
 
 const app = document.querySelector<HTMLDivElement>('#app');
@@ -136,6 +136,11 @@ if (savedClass) {
 }
 
 createBtn.addEventListener('click', () => {
+  if (!socket.connected) {
+    notify('Sin conexión con el servidor. Revisa red/SSL y recarga.');
+    return;
+  }
+
   const playerName = validatedName();
   if (!playerName) {
     notify('El nombre debe tener entre 3 y 16 caracteres.');
@@ -151,6 +156,11 @@ createBtn.addEventListener('click', () => {
 });
 
 joinBtn.addEventListener('click', () => {
+  if (!socket.connected) {
+    notify('Sin conexión con el servidor. Revisa red/SSL y recarga.');
+    return;
+  }
+
   const playerName = validatedName();
   if (!playerName) {
     notify('El nombre debe tener entre 3 y 16 caracteres.');
@@ -173,6 +183,11 @@ joinBtn.addEventListener('click', () => {
 });
 
 startBtn.addEventListener('click', () => {
+  if (!socket.connected) {
+    notify('Sin conexión con el servidor. Revisa red/SSL y recarga.');
+    return;
+  }
+
   socket.emit('room:start');
 });
 
@@ -217,6 +232,17 @@ socket.on('error', (payload: SocketErrorPayload | Error) => {
   }
 
   notify('Error de red.');
+});
+
+socket.on('connect_error', () => {
+  notify('No se pudo conectar al servidor (socket).');
+});
+
+socket.on('disconnect', (reason) => {
+  if (reason === 'io client disconnect') {
+    return;
+  }
+  notify('Conexión perdida con el servidor.');
 });
 
 function renderLobby(payload: LobbyStatePayload): void {
@@ -544,4 +570,33 @@ function must<T extends HTMLElement>(selector: string): T {
     throw new Error(`No se encontró ${selector}`);
   }
   return element;
+}
+
+function resolveServerUrl(configuredUrl?: string): string | undefined {
+  if (!configuredUrl) {
+    return undefined;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(configuredUrl);
+  } catch {
+    return configuredUrl;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  if (!isLoopback) {
+    return configuredUrl;
+  }
+
+  const currentHost = window.location.hostname.toLowerCase();
+  const currentIsLoopback = currentHost === 'localhost' || currentHost === '127.0.0.1' || currentHost === '::1';
+
+  // Avoid hardcoded localhost URLs when opening from another device (e.g. mobile).
+  if (!currentIsLoopback) {
+    return undefined;
+  }
+
+  return configuredUrl;
 }
