@@ -14,7 +14,8 @@ import type {
 } from './types';
 
 const serverUrl = import.meta.env.VITE_SERVER_URL as string | undefined;
-const socket: Socket = io(resolveServerUrl(serverUrl), {
+const resolvedServerUrl = resolveServerUrl(serverUrl);
+const socket: Socket = io(resolvedServerUrl, {
   transports: ['websocket', 'polling']
 });
 
@@ -234,8 +235,9 @@ socket.on('error', (payload: SocketErrorPayload | Error) => {
   notify('Error de red.');
 });
 
-socket.on('connect_error', () => {
-  notify('No se pudo conectar al servidor (socket).');
+socket.on('connect_error', (err) => {
+  const detail = err?.message ? ` (${err.message})` : '';
+  notify(`No se pudo conectar al servidor (socket)${detail}.`);
 });
 
 socket.on('disconnect', (reason) => {
@@ -586,16 +588,34 @@ function resolveServerUrl(configuredUrl?: string): string | undefined {
 
   const host = parsed.hostname.toLowerCase();
   const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  const currentHost = window.location.hostname.toLowerCase();
+  const currentIsLoopback = currentHost === 'localhost' || currentHost === '127.0.0.1' || currentHost === '::1';
+  const pageIsHttps = window.location.protocol === 'https:';
+
   if (!isLoopback) {
+    // Avoid mixed-content in HTTPS pages when server URL was set to plain HTTP.
+    if (pageIsHttps && parsed.protocol === 'http:') {
+      const sameHost = host === currentHost;
+      if (sameHost) {
+        return undefined;
+      }
+      parsed.protocol = 'https:';
+      if (parsed.port === '80') {
+        parsed.port = '';
+      }
+      return parsed.toString();
+    }
     return configuredUrl;
   }
 
-  const currentHost = window.location.hostname.toLowerCase();
-  const currentIsLoopback = currentHost === 'localhost' || currentHost === '127.0.0.1' || currentHost === '::1';
-
   // Avoid hardcoded localhost URLs when opening from another device (e.g. mobile).
   if (!currentIsLoopback) {
-    return undefined;
+    const rewritten = new URL(window.location.origin);
+    rewritten.port = parsed.port;
+    rewritten.pathname = '';
+    rewritten.search = '';
+    rewritten.hash = '';
+    return rewritten.toString();
   }
 
   return configuredUrl;

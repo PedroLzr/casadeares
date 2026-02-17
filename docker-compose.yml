@@ -7,7 +7,7 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3000
-      CORS_ORIGIN: http://localhost:5173
+      CORS_ORIGIN: "*"
     volumes:
       - ./server:/app
       - /app/node_modules
@@ -21,7 +21,7 @@ services:
       dockerfile: Dockerfile.dev
     container_name: autobattler-client-dev
     environment:
-      VITE_SERVER_URL: http://localhost:3000
+      VITE_PROXY_TARGET: http://server:3000
     volumes:
       - ./client:/app
       - /app/node_modules
