@@ -162,7 +162,6 @@ const highlightBySocketId = new Map<string, number>();
 const compactMobileQuery = window.matchMedia('(max-width: 600px) and (orientation: portrait)');
 const desktopHudMarginPx = 16;
 const desktopHudBoardGapPx = 18;
-const minDesktopHudWidthPx = 220;
 const leaderboardRenderIntervalMs = 140;
 let lastLeaderboardRenderAt = 0;
 let pendingLeaderboardPlayers: SnapshotPlayer[] | null = null;
@@ -682,7 +681,7 @@ function syncLegendWidth(): void {
   const boardRightEdgePx = (viewportWidth + boardVisibleSize) / 2;
   const leftPx = Math.round(boardRightEdgePx + desktopHudBoardGapPx);
   const rightPx = desktopHudMarginPx;
-  if (leftPx + minDesktopHudWidthPx >= viewportWidth - rightPx) {
+  if (leftPx >= viewportWidth - rightPx) {
     leaderboardPanel.style.left = '';
     leaderboardPanel.style.right = `${rightPx}px`;
     return;
