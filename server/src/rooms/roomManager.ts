@@ -11,6 +11,8 @@ import type {
   ClientJoinRoomPayload,
   LobbyPlayer,
   LobbyStatePayload,
+  OpenRoomSummary,
+  OpenRoomsPayload,
   RoomState,
   SocketErrorPayload
 } from '../types';
@@ -19,6 +21,7 @@ interface Room {
   roomId: string;
   hostId: string;
   state: RoomState;
+  createdAt: number;
   players: Map<string, LobbyPlayer>;
   nextPlayerId: number;
   simulation: GameSimulation | null;
@@ -45,9 +48,15 @@ export class RoomManager {
       this.handleStartRoom(socket);
     });
 
+    socket.on('room:listOpen', () => {
+      this.emitOpenRooms(socket);
+    });
+
     socket.on('disconnect', () => {
       this.handleSocketLeave(socket.id);
     });
+
+    this.emitOpenRooms(socket);
   }
 
   private handleCreateRoom(socket: Socket, payload: ClientCreateRoomPayload): void {
@@ -73,6 +82,7 @@ export class RoomManager {
       roomId,
       hostId: socket.id,
       state: 'lobby',
+      createdAt: now,
       players: new Map([[socket.id, player]]),
       nextPlayerId: 2,
       simulation: null
@@ -83,6 +93,7 @@ export class RoomManager {
     socket.join(roomId);
 
     this.broadcastLobbyState(room);
+    this.broadcastOpenRooms();
   }
 
   private handleJoinRoom(socket: Socket, payload: ClientJoinRoomPayload): void {
@@ -128,6 +139,7 @@ export class RoomManager {
     socket.join(room.roomId);
 
     this.broadcastLobbyState(room);
+    this.broadcastOpenRooms();
   }
 
   private handleStartRoom(socket: Socket): void {
@@ -153,6 +165,7 @@ export class RoomManager {
     }
 
     room.state = 'running';
+    this.broadcastOpenRooms();
 
     const simulation = new GameSimulation(
       [...room.players.values()],
@@ -182,6 +195,7 @@ export class RoomManager {
       room.players.delete(socketId);
       if (room.players.size === 0) {
         this.rooms.delete(room.roomId);
+        this.broadcastOpenRooms();
         return;
       }
 
@@ -193,6 +207,7 @@ export class RoomManager {
       }
 
       this.broadcastLobbyState(room);
+      this.broadcastOpenRooms();
       return;
     }
 
@@ -277,6 +292,37 @@ export class RoomManager {
   private emitError(socket: Socket, code: string, message: string): void {
     const payload: SocketErrorPayload = { code, message };
     socket.emit('error', payload);
+  }
+
+  private emitOpenRooms(socket: Socket): void {
+    socket.emit('room:openList', this.buildOpenRoomsPayload());
+  }
+
+  private broadcastOpenRooms(): void {
+    this.io.emit('room:openList', this.buildOpenRoomsPayload());
+  }
+
+  private buildOpenRoomsPayload(): OpenRoomsPayload {
+    const rooms: OpenRoomSummary[] = [...this.rooms.values()]
+      .filter((room) => room.state === 'lobby')
+      .map((room) => {
+        const host = room.players.get(room.hostId);
+        return {
+          roomId: room.roomId,
+          hostName: host?.name ?? 'Host',
+          playerCount: room.players.size,
+          maxPlayers: MAX_PLAYERS_PER_ROOM,
+          createdAt: room.createdAt
+        };
+      })
+      .sort((a, b) => {
+        if (a.createdAt !== b.createdAt) {
+          return a.createdAt - b.createdAt;
+        }
+        return a.roomId.localeCompare(b.roomId);
+      });
+
+    return { rooms };
   }
 
   private generateRoomId(): string {

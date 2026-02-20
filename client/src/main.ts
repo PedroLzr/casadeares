@@ -8,6 +8,8 @@ import type {
   ItemType,
   LobbyPlayer,
   LobbyStatePayload,
+  OpenRoomsPayload,
+  OpenRoomSummary,
   SnapshotPickupEvent,
   SnapshotPlayer,
   SocketErrorPayload
@@ -28,31 +30,40 @@ if (!app) {
 app.innerHTML = `
   <div id="game-root"></div>
 
-  <section id="home-panel" class="panel">
-    <h1>La casa de Ares</h1>
+  <div id="home-shell" class="home-shell">
+    <section id="home-panel" class="panel home-panel">
+      <h1>La casa de Ares</h1>
 
-    <label>Nombre (3-16)
-      <input id="name-input" type="text" maxlength="16" minlength="3" placeholder="Tu nombre" />
-    </label>
+      <label>Nombre (3-16)
+        <input id="name-input" type="text" maxlength="16" minlength="3" placeholder="Tu nombre" />
+      </label>
 
-    <label>Clase
-      <select id="class-select">
-        <option value="sorceress">Hechicera</option>
-        <option value="paladin">Paladín</option>
-        <option value="barbarian">Bárbaro</option>
-      </select>
-    </label>
+      <label>Clase
+        <select id="class-select">
+          <option value="sorceress">Hechicera</option>
+          <option value="paladin">Paladín</option>
+          <option value="barbarian">Bárbaro</option>
+        </select>
+      </label>
 
-    <label id="room-label">Room ID (solo para unirse)
-      <input id="room-input" type="text" maxlength="6" placeholder="ABC123" />
-    </label>
+      <label id="room-label">Room ID (solo para unirse)
+        <input id="room-input" type="text" maxlength="6" placeholder="ABC123" />
+      </label>
 
-    <div id="home-actions" class="row">
-      <button id="create-btn">Crear sala</button>
-      <button id="join-btn" class="secondary">Unirse</button>
-    </div>
-    <button id="accept-btn" class="secondary hidden">Aceptar</button>
-  </section>
+      <div id="home-actions" class="row">
+        <button id="create-btn">Crear sala</button>
+        <button id="join-btn" class="secondary">Unirse</button>
+      </div>
+      <button id="accept-btn" class="secondary hidden">Aceptar</button>
+    </section>
+
+    <aside id="open-rooms-panel" class="panel home-open-rooms">
+      <h2>Partidas abiertas</h2>
+      <p id="open-rooms-help" class="open-rooms-help">Salas en lobby disponibles para unirse.</p>
+      <p id="open-rooms-empty" class="open-rooms-empty">No hay salas abiertas ahora.</p>
+      <ul id="open-rooms-list" class="open-rooms-list"></ul>
+    </aside>
+  </div>
 
   <section id="lobby-panel" class="panel hidden">
     <h2>Lobby</h2>
@@ -87,6 +98,14 @@ app.innerHTML = `
         </ul>
       </div>
       <div class="legend-section">
+        <h4>Estadísticas</h4>
+        <ul class="legend-list">
+          <li><span><strong>A</strong>: daño de cada golpe básico.</span></li>
+          <li><span><strong>V</strong>: velocidad de movimiento (px/s).</span></li>
+          <li><span><strong>E</strong>: enfriamiento entre ataques.</span></li>
+        </ul>
+      </div>
+      <div class="legend-section">
         <h4>Objetos</h4>
         <ul class="legend-list">
           <li><span class="sprite-icon sprite-item sprite-item-sword"></span><span><strong>Espada</strong>: aumenta el daño de ataque.</span></li>
@@ -110,7 +129,7 @@ app.innerHTML = `
   <div id="toast" class="toast hidden"></div>
 `;
 
-const homePanel = must<HTMLDivElement>('#home-panel');
+const homeShell = must<HTMLDivElement>('#home-shell');
 const lobbyPanel = must<HTMLDivElement>('#lobby-panel');
 const endPanel = must<HTMLDivElement>('#end-panel');
 const toast = must<HTMLDivElement>('#toast');
@@ -132,12 +151,23 @@ const copyLinkBtn = must<HTMLButtonElement>('#copy-link-btn');
 const lobbyPlayers = must<HTMLUListElement>('#lobby-players');
 const resultsList = must<HTMLOListElement>('#results-list');
 const leaderboardList = must<HTMLUListElement>('#leaderboard-list');
+const openRoomsList = must<HTMLUListElement>('#open-rooms-list');
+const openRoomsEmpty = must<HTMLParagraphElement>('#open-rooms-empty');
 
 let renderer: GameRenderer | null = null;
 let receivedFirstSnapshot = false;
 let toastTimeout: number | null = null;
 let currentShareUrl: string | null = null;
 const highlightBySocketId = new Map<string, number>();
+const compactMobileQuery = window.matchMedia('(max-width: 600px) and (orientation: portrait)');
+const desktopHudMarginPx = 16;
+const desktopHudBoardGapPx = 18;
+const minDesktopHudWidthPx = 220;
+const leaderboardRenderIntervalMs = 140;
+let lastLeaderboardRenderAt = 0;
+let pendingLeaderboardPlayers: SnapshotPlayer[] | null = null;
+let leaderboardRenderTimeout: number | null = null;
+let legendWidthRaf: number | null = null;
 
 const savedName = localStorage.getItem('player_name');
 if (savedName) {
@@ -240,6 +270,14 @@ exitBtn.addEventListener('click', () => {
   window.location.reload();
 });
 
+socket.on('connect', () => {
+  socket.emit('room:listOpen');
+});
+
+socket.on('room:openList', (payload: OpenRoomsPayload) => {
+  renderOpenRooms(payload.rooms);
+});
+
 socket.on('room:lobbyState', (payload: LobbyStatePayload) => {
   receivedFirstSnapshot = false;
   highlightBySocketId.clear();
@@ -253,7 +291,7 @@ socket.on('game:snapshot', (snapshot: GameSnapshotPayload) => {
   }
 
   consumePickupEvents(snapshot.pickups);
-  renderLeaderboard(snapshot.players);
+  scheduleLeaderboardRender(snapshot.players);
   renderer.pushSnapshot(snapshot);
 
   if (!receivedFirstSnapshot) {
@@ -304,6 +342,48 @@ function renderLobby(payload: LobbyStatePayload): void {
   }
 
   startBtn.classList.toggle('hidden', !isHost);
+}
+
+function renderOpenRooms(rooms: OpenRoomSummary[]): void {
+  openRoomsList.innerHTML = '';
+  openRoomsEmpty.classList.toggle('hidden', rooms.length > 0);
+
+  for (const room of rooms) {
+    const li = document.createElement('li');
+    li.className = 'open-room-row';
+
+    const summary = document.createElement('div');
+    summary.className = 'open-room-summary';
+
+    const roomId = document.createElement('strong');
+    roomId.className = 'open-room-id';
+    roomId.textContent = room.roomId;
+
+    const meta = document.createElement('span');
+    meta.className = 'open-room-meta';
+    meta.textContent = `${room.playerCount}/${room.maxPlayers} | Host: ${room.hostName}`;
+
+    summary.appendChild(roomId);
+    summary.appendChild(meta);
+
+    const join = document.createElement('button');
+    join.className = 'secondary open-room-join';
+    join.type = 'button';
+    join.textContent = 'Unirse';
+    join.disabled = room.playerCount >= room.maxPlayers;
+    join.addEventListener('click', () => {
+      if (roomInput.readOnly) {
+        notify('Estás en modo enlace. Quita ?room=... para elegir otra sala.');
+        return;
+      }
+      roomInput.value = room.roomId;
+      submitJoin();
+    });
+
+    li.appendChild(summary);
+    li.appendChild(join);
+    openRoomsList.appendChild(li);
+  }
 }
 
 function renderEnd(payload: GameEndPayload): void {
@@ -381,10 +461,44 @@ function medalForPosition(position: number): string {
 }
 
 function setScreen(screen: 'home' | 'lobby' | 'game' | 'end'): void {
-  homePanel.classList.toggle('hidden', screen !== 'home');
+  homeShell.classList.toggle('hidden', screen !== 'home');
   lobbyPanel.classList.toggle('hidden', screen !== 'lobby');
   endPanel.classList.toggle('hidden', screen !== 'end');
   leaderboardPanel.classList.toggle('hidden', screen !== 'game');
+  if (screen === 'game') {
+    requestLegendWidthSync();
+  }
+}
+
+function scheduleLeaderboardRender(players: SnapshotPlayer[]): void {
+  pendingLeaderboardPlayers = players;
+  const elapsed = performance.now() - lastLeaderboardRenderAt;
+  const waitMs = Math.max(0, leaderboardRenderIntervalMs - elapsed);
+
+  if (waitMs === 0) {
+    flushLeaderboardRender();
+    return;
+  }
+
+  if (leaderboardRenderTimeout !== null) {
+    return;
+  }
+
+  leaderboardRenderTimeout = window.setTimeout(() => {
+    leaderboardRenderTimeout = null;
+    flushLeaderboardRender();
+  }, waitMs);
+}
+
+function flushLeaderboardRender(): void {
+  const players = pendingLeaderboardPlayers;
+  if (!players) {
+    return;
+  }
+
+  pendingLeaderboardPlayers = null;
+  lastLeaderboardRenderAt = performance.now();
+  renderLeaderboard(players);
 }
 
 function validatedName(): string | null {
@@ -444,7 +558,6 @@ function renderLeaderboard(players: SnapshotPlayer[]): void {
 
     const hp = Math.ceil(player.hp / 100);
     const hpMax = Math.max(1, Math.ceil(player.maxHp / 100));
-    const shield = Math.ceil(player.shield / 100);
     const hpRatio = Math.max(0, Math.min(1, player.hp / player.maxHp));
     const attack = Math.ceil(player.attackDamage / 100);
     const cooldownSeconds = (player.attackCooldownTicks / 20).toFixed(2);
@@ -469,36 +582,28 @@ function renderLeaderboard(players: SnapshotPlayer[]): void {
 
     identity.appendChild(name);
     identity.appendChild(classTag);
-
-    const hpText = document.createElement('span');
-    hpText.className = 'stats-hp-text';
-    const hpMain = document.createElement('span');
-    hpMain.className = 'stats-hp-main';
-    hpMain.textContent = `HP ${hp}/${hpMax}`;
-    hpText.appendChild(hpMain);
-    if (shield > 0) {
-      const hpShield = document.createElement('span');
-      hpShield.className = 'stats-hp-shield';
-      hpShield.textContent = ` (+${shield})`;
-      hpText.appendChild(hpShield);
-    }
+    identity.appendChild(statBadge('A', `${attack}`));
+    identity.appendChild(statBadge('V', `${player.speedPerSecond}`));
+    identity.appendChild(statBadge('E', `${cooldownSeconds}s`));
 
     top.appendChild(rank);
     top.appendChild(identity);
-    top.appendChild(hpText);
 
     const hpTrack = document.createElement('div');
     hpTrack.className = 'stats-hp-track';
     const hpFill = document.createElement('div');
     hpFill.className = 'stats-hp-fill';
     hpFill.style.width = `${(hpRatio * 100).toFixed(1)}%`;
+    const hpLabel = document.createElement('span');
+    hpLabel.className = 'stats-hp-label';
+    hpLabel.textContent = `${hp}/${hpMax}`;
     hpTrack.appendChild(hpFill);
+    hpTrack.appendChild(hpLabel);
 
-    const metrics = document.createElement('div');
-    metrics.className = 'stats-metrics';
-    metrics.appendChild(metricChip('ATK', `${attack}`));
-    metrics.appendChild(metricChip('VEL', `${player.speedPerSecond}`));
-    metrics.appendChild(metricChip('CD', `${cooldownSeconds}s`));
+    const summary = document.createElement('div');
+    summary.className = 'stats-summary';
+    summary.appendChild(top);
+    summary.appendChild(hpTrack);
 
     const items = document.createElement('div');
     items.className = 'stats-items';
@@ -508,30 +613,28 @@ function renderLeaderboard(players: SnapshotPlayer[]): void {
     items.appendChild(itemChip('armor', player.armors));
     items.appendChild(itemChip('blessing', player.blessings));
 
-    li.appendChild(top);
-    li.appendChild(hpTrack);
-    li.appendChild(metrics);
+    li.appendChild(summary);
     li.appendChild(items);
     leaderboardList.appendChild(li);
   }
 }
 
-function metricChip(label: string, value: string): HTMLDivElement {
-  const chip = document.createElement('div');
-  chip.className = 'metric-chip';
-  chip.title = metricDescription(label);
+function statBadge(label: string, value: string): HTMLSpanElement {
+  const badge = document.createElement('span');
+  badge.className = 'stats-badge';
+  badge.title = metricDescription(label);
 
   const key = document.createElement('span');
-  key.className = 'metric-key';
+  key.className = 'stats-badge-key';
   key.textContent = label;
 
   const val = document.createElement('span');
-  val.className = 'metric-val';
+  val.className = 'stats-badge-val';
   val.textContent = value;
 
-  chip.appendChild(key);
-  chip.appendChild(val);
-  return chip;
+  badge.appendChild(key);
+  badge.appendChild(val);
+  return badge;
 }
 
 function itemChip(itemType: ItemType, count: number): HTMLDivElement {
@@ -552,13 +655,61 @@ function itemChip(itemType: ItemType, count: number): HTMLDivElement {
 }
 
 function metricDescription(label: string): string {
-  if (label === 'ATK') {
+  if (label === 'A') {
     return 'Daño de cada golpe básico.';
   }
-  if (label === 'VEL') {
+  if (label === 'V') {
     return 'Velocidad de movimiento en píxeles por segundo.';
   }
-  return 'Cooldown entre ataques básicos.';
+  return 'enfriamiento entre ataque';
+}
+
+function syncLegendWidth(): void {
+  if (leaderboardPanel.classList.contains('hidden')) {
+    return;
+  }
+
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  if (compactMobileQuery.matches || viewportWidth <= 600) {
+    leaderboardPanel.style.left = '';
+    leaderboardPanel.style.right = '';
+    return;
+  }
+
+  const boardVisibleSize = Math.min(viewportWidth, viewportHeight);
+  const boardRightEdgePx = (viewportWidth + boardVisibleSize) / 2;
+  const leftPx = Math.round(boardRightEdgePx + desktopHudBoardGapPx);
+  const rightPx = desktopHudMarginPx;
+  if (leftPx + minDesktopHudWidthPx >= viewportWidth - rightPx) {
+    leaderboardPanel.style.left = '';
+    leaderboardPanel.style.right = `${rightPx}px`;
+    return;
+  }
+
+  leaderboardPanel.style.left = `${leftPx}px`;
+  leaderboardPanel.style.right = `${rightPx}px`;
+}
+
+window.addEventListener('resize', () => {
+  requestLegendWidthSync();
+});
+
+function requestLegendWidthSync(): void {
+  if (legendWidthRaf !== null) {
+    return;
+  }
+  legendWidthRaf = window.requestAnimationFrame(() => {
+    legendWidthRaf = null;
+    syncLegendWidth();
+  });
+}
+
+if ('addEventListener' in compactMobileQuery) {
+  compactMobileQuery.addEventListener('change', requestLegendWidthSync);
+} else {
+  compactMobileQuery.addListener(requestLegendWidthSync);
 }
 
 function itemDescription(itemType: ItemType): string {

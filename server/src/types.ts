@@ -29,6 +29,18 @@ export interface LobbyStatePayload {
   players: LobbyPlayer[];
 }
 
+export interface OpenRoomSummary {
+  roomId: string;
+  hostName: string;
+  playerCount: number;
+  maxPlayers: number;
+  createdAt: number;
+}
+
+export interface OpenRoomsPayload {
+  rooms: OpenRoomSummary[];
+}
+
 export interface SnapshotMap {
   cellsPerSide: number;
   sizePx: number;

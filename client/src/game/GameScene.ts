@@ -63,6 +63,8 @@ const ATTACK_TRIGGER_MIN_COOLDOWN_TICKS = 12;
 const COMBAT_CONTACT_RANGE_PX = 12;
 const COMBAT_JITTER_IDLE_THRESHOLD_PX = 1.1;
 const ATTACK_POSE_MS = 130;
+const MOBILE_TEXT_RESOLUTION_CAP = 1.5;
+const DEFAULT_TEXT_RESOLUTION_CAP = 4;
 
 const CLASS_ROW_INDEX: Record<ClassType, number> = {
   barbarian: 0,
@@ -119,7 +121,7 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(0x0f1720);
     this.cameras.main.roundPixels = true;
     this.ensureAnimations();
-    this.textResolution = Math.max(1, Math.min(4, window.devicePixelRatio || 1));
+    this.textResolution = Math.max(1, Math.min(this.textResolutionCap(), window.devicePixelRatio || 1));
     this.drawMap(this.mapSizePx, this.cellsPerSide);
     this.scale.on('resize', () => {
       this.applyFixedCamera();
@@ -531,8 +533,16 @@ export class GameScene extends Phaser.Scene {
       this.mapGraphics.lineBetween(0, v, sizePx, v);
     }
 
-    this.mapGraphics.lineStyle(8, 0xd4b06a, 1);
-    this.mapGraphics.strokeRect(0, 0, sizePx, sizePx);
+    // Draw border fully inside the map so it doesn't get clipped on bottom/right edges.
+    const borderWidth = 2;
+    const borderInset = borderWidth / 2;
+    this.mapGraphics.lineStyle(borderWidth, 0x223242, 0.75);
+    this.mapGraphics.strokeRect(
+      borderInset,
+      borderInset,
+      sizePx - borderWidth,
+      sizePx - borderWidth
+    );
 
     this.applyFixedCamera();
   }
@@ -551,7 +561,7 @@ export class GameScene extends Phaser.Scene {
   private updateTextResolutionForZoom(): void {
     const zoom = this.cameras.main.zoom || 1;
     const dpr = window.devicePixelRatio || 1;
-    const targetResolution = Math.max(1, Math.min(4, dpr * zoom));
+    const targetResolution = Math.max(1, Math.min(this.textResolutionCap(), dpr * zoom));
     if (Math.abs(targetResolution - this.textResolution) < 0.01) {
       return;
     }
@@ -565,6 +575,14 @@ export class GameScene extends Phaser.Scene {
     for (const popup of this.damagePopups.values()) {
       popup.text.setResolution(this.textResolution);
     }
+  }
+
+  private textResolutionCap(): number {
+    const compactViewport = Math.min(window.innerWidth, window.innerHeight) <= 680;
+    if (compactViewport) {
+      return MOBILE_TEXT_RESOLUTION_CAP;
+    }
+    return DEFAULT_TEXT_RESOLUTION_CAP;
   }
 
   private showDamagePopup(socketId: string, x: number, y: number, amount: number): void {
