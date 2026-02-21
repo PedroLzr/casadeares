@@ -22,6 +22,7 @@ services:
     container_name: casadeares-client
     environment:
       VITE_PROXY_TARGET: http://server:3001
+      VITE_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS:-localhost,127.0.0.1,casadeares.online,www.casadeares.online}
     volumes:
       - ./client:/app
       - /app/node_modules
