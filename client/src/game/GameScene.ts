@@ -26,6 +26,9 @@ interface RenderPlayer {
   lastAttackCooldownTicks: number;
   attackPoseUntilMs: number;
   tintResetEvent: Phaser.Time.TimerEvent | null;
+  recoilX: number;
+  recoilY: number;
+  recoilUntilMs: number;
 }
 
 interface DamagePopup {
@@ -51,6 +54,12 @@ interface InterpolatedState {
   cellsPerSide: number;
 }
 
+interface NearestEnemyInfo {
+  distance: number;
+  enemyX: number;
+  enemyY: number;
+}
+
 const CHARACTER_SHEET_KEY = 'charactersSheet';
 const ITEM_SHEET_KEY = 'itemsSheet';
 const HAZARD_SHEET_KEY = 'hazardsSheet';
@@ -63,6 +72,18 @@ const ATTACK_TRIGGER_MIN_COOLDOWN_TICKS = 12;
 const COMBAT_CONTACT_RANGE_PX = 12;
 const COMBAT_JITTER_IDLE_THRESHOLD_PX = 1.1;
 const ATTACK_POSE_MS = 130;
+const ATTACK_SLASH_RANGE_PX = COMBAT_CONTACT_RANGE_PX * 2.2;
+const SCRUM_LINK_RANGE_MULTIPLIER = 2.05;
+const SCRUM_MIN_PLAYERS = 2;
+const SCRUM_PULSE_MS = 280;
+const DAMAGE_FLASH_COLOR = 0xff4646;
+const DAMAGE_FLASH_MS = 165;
+const ATTACK_FLASH_COLOR = 0xffe08a;
+const ATTACK_FLASH_MS = 90;
+const HIT_STOP_MS = 56;
+const HIT_STOP_MIN_INTERVAL_MS = 92;
+const KNOCKBACK_VISUAL_PX = 3.4;
+const KNOCKBACK_DECAY_MS = 130;
 const MOBILE_TEXT_RESOLUTION_CAP = 1.5;
 const DEFAULT_TEXT_RESOLUTION_CAP = 4;
 
@@ -88,6 +109,7 @@ export class GameScene extends Phaser.Scene {
   private renderHazards = new Map<string, RenderHazard>();
   private renderItems = new Map<string, Phaser.GameObjects.Sprite>();
   private damagePopups = new Map<string, DamagePopup>();
+  private scrumGraphics: Phaser.GameObjects.Graphics | null = null;
 
   private mapGraphics: Phaser.GameObjects.Graphics | null = null;
   private mapSizePx = 1024;
@@ -97,6 +119,8 @@ export class GameScene extends Phaser.Scene {
   private hpFontPx = 11;
   private hpBarHeightPx = 6;
   private textResolution = 1;
+  private hitStopUntilMs = 0;
+  private lastHitStopAtMs = -Infinity;
 
   constructor() {
     super('GameScene');
@@ -123,6 +147,8 @@ export class GameScene extends Phaser.Scene {
     this.ensureAnimations();
     this.textResolution = Math.max(1, Math.min(this.textResolutionCap(), window.devicePixelRatio || 1));
     this.drawMap(this.mapSizePx, this.cellsPerSide);
+    this.scrumGraphics = this.add.graphics();
+    this.scrumGraphics.setDepth(-1);
     this.scale.on('resize', () => {
       this.applyFixedCamera();
     });
@@ -149,12 +175,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(): void {
-    const state = this.getInterpolatedState(performance.now());
+    const now = performance.now();
+    const state = this.getInterpolatedState(now);
     if (!state) {
       return;
     }
 
-    this.renderState(state);
+    if (now < this.hitStopUntilMs) {
+      return;
+    }
+
+    this.renderState(state, now);
   }
 
   private getInterpolatedState(now: number): InterpolatedState | null {
@@ -211,16 +242,17 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
-  private renderState(state: InterpolatedState): void {
+  private renderState(state: InterpolatedState, nowMs: number): void {
     if (state.mapSize !== this.mapSizePx || state.cellsPerSide !== this.cellsPerSide) {
       this.drawMap(state.mapSize, state.cellsPerSide);
     }
 
-    const nearestEnemyDistanceBySocketId = this.computeNearestEnemyDistanceBySocketId(state.players);
+    const nearestEnemyBySocketId = this.computeNearestEnemyInfoBySocketId(state.players);
+    this.renderMeleeScrumIndicators(state.players, nowMs);
     const alivePlayerIds = new Set<string>();
     for (const player of state.players) {
       alivePlayerIds.add(player.socketId);
-      this.upsertPlayer(player, nearestEnemyDistanceBySocketId.get(player.socketId) ?? null);
+      this.upsertPlayer(player, nearestEnemyBySocketId.get(player.socketId) ?? null, nowMs);
     }
 
     for (const [socketId, renderPlayer] of this.renderPlayers) {
@@ -266,7 +298,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private upsertPlayer(player: SnapshotPlayer, nearestEnemyDistance: number | null): void {
+  private upsertPlayer(player: SnapshotPlayer, nearestEnemyInfo: NearestEnemyInfo | null, nowMs: number): void {
     const existing = this.renderPlayers.get(player.socketId);
     const hpRatio = Phaser.Math.Clamp(player.hp / player.maxHp, 0, 1);
     const hpDisplay = Math.max(0, Math.ceil(player.hp / 100));
@@ -276,8 +308,19 @@ export class GameScene extends Phaser.Scene {
     const shieldLabel = shieldDisplay > 0 ? `(+${shieldDisplay})` : '';
     const bodySize = Math.max(12, Math.round(this.playerSizePx * 1.45));
     const hpBarWidth = Math.max(bodySize + 4, 12);
-    const px = Math.round(player.x);
-    const py = Math.round(player.y);
+    let visualX = player.x;
+    let visualY = player.y;
+    if (existing && nowMs < existing.recoilUntilMs) {
+      const decay = Phaser.Math.Clamp((existing.recoilUntilMs - nowMs) / KNOCKBACK_DECAY_MS, 0, 1);
+      visualX += existing.recoilX * decay;
+      visualY += existing.recoilY * decay;
+    } else if (existing && existing.recoilUntilMs !== 0) {
+      existing.recoilX = 0;
+      existing.recoilY = 0;
+      existing.recoilUntilMs = 0;
+    }
+    const px = Math.round(visualX);
+    const py = Math.round(visualY);
     const stackGap = Math.max(1, Math.round(this.playerSizePx * 0.08));
     const bodyTopY = py - bodySize / 2;
     const hpBarY = Math.round(bodyTopY - stackGap - this.hpBarHeightPx / 2);
@@ -333,14 +376,16 @@ export class GameScene extends Phaser.Scene {
         lastY: player.y,
         lastAttackCooldownTicks: player.attackCooldownTicks,
         attackPoseUntilMs: 0,
-        tintResetEvent: null
+        tintResetEvent: null,
+        recoilX: 0,
+        recoilY: 0,
+        recoilUntilMs: 0
       });
       return;
     }
 
     const movedDistance = Math.hypot(player.x - existing.lastX, player.y - existing.lastY);
-    const inCloseCombat = nearestEnemyDistance !== null && nearestEnemyDistance <= COMBAT_CONTACT_RANGE_PX;
-    const nowMs = performance.now();
+    const inCloseCombat = nearestEnemyInfo !== null && nearestEnemyInfo.distance <= COMBAT_CONTACT_RANGE_PX;
     const shouldIdleFromCombat = inCloseCombat && movedDistance < COMBAT_JITTER_IDLE_THRESHOLD_PX;
     const attackTriggered =
       player.attackCooldownTicks >= ATTACK_TRIGGER_MIN_COOLDOWN_TICKS &&
@@ -384,12 +429,22 @@ export class GameScene extends Phaser.Scene {
     if (hpLost > 0) {
       const damageDisplay = Math.max(1, Math.ceil(hpLost / HP_DISPLAY_DIVISOR));
       this.showDamagePopup(player.socketId, px, damageTextY, damageDisplay);
-      this.flashPlayerTint(existing, 0xff6b6b, 130);
+      this.flashPlayerTint(existing, DAMAGE_FLASH_COLOR, DAMAGE_FLASH_MS);
+      this.applyVisualKnockback(existing, player, nearestEnemyInfo);
+      if (nearestEnemyInfo && nearestEnemyInfo.distance <= ATTACK_SLASH_RANGE_PX) {
+        this.playSlashEffect(nearestEnemyInfo.enemyX, nearestEnemyInfo.enemyY, visualX, visualY);
+        this.requestHitStop(HIT_STOP_MS);
+      }
     }
 
     if (attackTriggered) {
       this.playAttackPulse(px, py);
-      this.flashPlayerTint(existing, 0xffe08a, 90);
+      if (nearestEnemyInfo && nearestEnemyInfo.distance <= ATTACK_SLASH_RANGE_PX) {
+        this.playSlashEffect(visualX, visualY, nearestEnemyInfo.enemyX, nearestEnemyInfo.enemyY);
+      }
+      if (hpLost <= 0) {
+        this.flashPlayerTint(existing, ATTACK_FLASH_COLOR, ATTACK_FLASH_MS);
+      }
     }
 
     existing.lastHp = player.hp;
@@ -520,6 +575,7 @@ export class GameScene extends Phaser.Scene {
 
     if (!this.mapGraphics) {
       this.mapGraphics = this.add.graphics();
+      this.mapGraphics.setDepth(-2);
     }
 
     this.mapGraphics.clear();
@@ -593,6 +649,14 @@ export class GameScene extends Phaser.Scene {
       existing.text.setPosition(x, y);
       existing.text.setAlpha(1);
       existing.text.setResolution(this.textResolution);
+      existing.text.setScale(1.22);
+      this.tweens.add({
+        targets: existing.text,
+        scaleX: 1,
+        scaleY: 1,
+        duration: 120,
+        ease: 'Cubic.Out'
+      });
       existing.tween?.remove();
       existing.tween = this.createDamagePopupTween(socketId, existing.text, y);
       return;
@@ -605,6 +669,14 @@ export class GameScene extends Phaser.Scene {
       stroke: '#220000',
       strokeThickness: 2
     }).setOrigin(0.5, 1).setResolution(this.textResolution);
+    text.setScale(1.14);
+    this.tweens.add({
+      targets: text,
+      scaleX: 1,
+      scaleY: 1,
+      duration: 120,
+      ease: 'Cubic.Out'
+    });
 
     const popup: DamagePopup = {
       text,
@@ -721,11 +793,147 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private computeNearestEnemyDistanceBySocketId(players: SnapshotPlayer[]): Map<string, number> {
-    const nearest = new Map<string, number>();
+  private playSlashEffect(fromX: number, fromY: number, toX: number, toY: number): void {
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    const distance = Math.hypot(dx, dy);
+    if (distance < 0.01) {
+      return;
+    }
+
+    const dirX = dx / distance;
+    const dirY = dy / distance;
+    const impactOffset = Math.max(4, Math.round(this.playerSizePx * 0.34));
+    const impactX = toX - dirX * impactOffset;
+    const impactY = toY - dirY * impactOffset;
+    const angle = Math.atan2(dy, dx);
+    const slashLength = Phaser.Math.Clamp(distance * 0.58, 12, 30);
+    const slashThickness = Math.max(2, Math.round(this.playerSizePx * 0.2));
+    const glowThickness = Math.max(4, Math.round(this.playerSizePx * 0.34));
+
+    const slash = this.add.rectangle(impactX, impactY, slashLength, slashThickness, 0xfff2be, 0.95);
+    slash.setRotation(angle);
+    const glow = this.add.rectangle(impactX, impactY, slashLength * 0.66, glowThickness, 0xff6b6b, 0.55);
+    glow.setRotation(angle);
+
+    this.tweens.add({
+      targets: [slash, glow],
+      alpha: 0,
+      scaleX: 1.25,
+      duration: 125,
+      ease: 'Quad.Out',
+      onComplete: () => {
+        slash.destroy();
+        glow.destroy();
+      }
+    });
+  }
+
+  private applyVisualKnockback(
+    renderPlayer: RenderPlayer,
+    player: SnapshotPlayer,
+    nearestEnemyInfo: NearestEnemyInfo | null
+  ): void {
+    let dirX = 0;
+    let dirY = -1;
+    if (nearestEnemyInfo) {
+      const awayX = player.x - nearestEnemyInfo.enemyX;
+      const awayY = player.y - nearestEnemyInfo.enemyY;
+      const norm = Math.hypot(awayX, awayY);
+      if (norm > 0.01) {
+        dirX = awayX / norm;
+        dirY = awayY / norm;
+      }
+    }
+
+    renderPlayer.recoilX = dirX * KNOCKBACK_VISUAL_PX;
+    renderPlayer.recoilY = dirY * KNOCKBACK_VISUAL_PX;
+    renderPlayer.recoilUntilMs = performance.now() + KNOCKBACK_DECAY_MS;
+  }
+
+  private requestHitStop(durationMs: number): void {
+    const now = performance.now();
+    if (now - this.lastHitStopAtMs < HIT_STOP_MIN_INTERVAL_MS) {
+      return;
+    }
+    this.lastHitStopAtMs = now;
+    this.hitStopUntilMs = Math.max(this.hitStopUntilMs, now + durationMs);
+  }
+
+  private renderMeleeScrumIndicators(players: SnapshotPlayer[], nowMs: number): void {
+    if (!this.scrumGraphics) {
+      this.scrumGraphics = this.add.graphics();
+      this.scrumGraphics.setDepth(-1);
+    }
+
+    this.scrumGraphics.clear();
+    if (players.length < SCRUM_MIN_PLAYERS) {
+      return;
+    }
+
+    const linkRange = Math.max(COMBAT_CONTACT_RANGE_PX * SCRUM_LINK_RANGE_MULTIPLIER, this.playerSizePx * 1.85);
+    const visited = new Set<number>();
+
+    for (let start = 0; start < players.length; start += 1) {
+      if (visited.has(start)) {
+        continue;
+      }
+
+      const stack = [start];
+      const component: number[] = [];
+      visited.add(start);
+
+      while (stack.length > 0) {
+        const idx = stack.pop() as number;
+        component.push(idx);
+        const pivot = players[idx];
+        for (let j = 0; j < players.length; j += 1) {
+          if (visited.has(j)) {
+            continue;
+          }
+          const candidate = players[j];
+          if (Math.hypot(candidate.x - pivot.x, candidate.y - pivot.y) <= linkRange) {
+            visited.add(j);
+            stack.push(j);
+          }
+        }
+      }
+
+      if (component.length < SCRUM_MIN_PLAYERS) {
+        continue;
+      }
+
+      let centerX = 0;
+      let centerY = 0;
+      for (const idx of component) {
+        centerX += players[idx].x;
+        centerY += players[idx].y;
+      }
+      centerX /= component.length;
+      centerY /= component.length;
+
+      let radius = 0;
+      for (const idx of component) {
+        radius = Math.max(radius, Math.hypot(players[idx].x - centerX, players[idx].y - centerY));
+      }
+      radius += Math.max(9, this.playerSizePx * 0.92);
+
+      const pulse = 0.5 + 0.5 * Math.sin((nowMs + start * 45) / SCRUM_PULSE_MS);
+      this.scrumGraphics.fillStyle(0xff8c52, 0.055 + 0.07 * pulse);
+      this.scrumGraphics.fillCircle(centerX, centerY, radius);
+      this.scrumGraphics.lineStyle(2, 0xffce93, 0.33 + 0.3 * pulse);
+      this.scrumGraphics.strokeCircle(centerX, centerY, radius);
+      this.scrumGraphics.lineStyle(1, 0xfff1c7, 0.16 + 0.18 * pulse);
+      this.scrumGraphics.strokeCircle(centerX, centerY, radius * 0.72);
+    }
+  }
+
+  private computeNearestEnemyInfoBySocketId(players: SnapshotPlayer[]): Map<string, NearestEnemyInfo> {
+    const nearest = new Map<string, NearestEnemyInfo>();
     for (let i = 0; i < players.length; i += 1) {
       const a = players[i];
       let best = Number.POSITIVE_INFINITY;
+      let bestEnemy: SnapshotPlayer | null = null;
       for (let j = 0; j < players.length; j += 1) {
         if (i === j) {
           continue;
@@ -734,10 +942,15 @@ export class GameScene extends Phaser.Scene {
         const dist = Math.hypot(b.x - a.x, b.y - a.y);
         if (dist < best) {
           best = dist;
+          bestEnemy = b;
         }
       }
-      if (best < Number.POSITIVE_INFINITY) {
-        nearest.set(a.socketId, best);
+      if (best < Number.POSITIVE_INFINITY && bestEnemy) {
+        nearest.set(a.socketId, {
+          distance: best,
+          enemyX: bestEnemy.x,
+          enemyY: bestEnemy.y
+        });
       }
     }
     return nearest;

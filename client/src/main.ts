@@ -162,6 +162,8 @@ const highlightBySocketId = new Map<string, number>();
 const compactMobileQuery = window.matchMedia('(max-width: 600px) and (orientation: portrait)');
 const desktopHudMarginPx = 16;
 const desktopHudBoardGapPx = 18;
+const compactDesktopHudMinWidthPx = 300;
+const compactDesktopHudMaxViewportHeightPx = 760;
 const leaderboardRenderIntervalMs = 140;
 let lastLeaderboardRenderAt = 0;
 let pendingLeaderboardPlayers: SnapshotPlayer[] | null = null;
@@ -674,6 +676,7 @@ function syncLegendWidth(): void {
   if (compactMobileQuery.matches || viewportWidth <= 600) {
     leaderboardPanel.style.left = '';
     leaderboardPanel.style.right = '';
+    leaderboardPanel.classList.remove('leaderboard-compact');
     return;
   }
 
@@ -681,6 +684,11 @@ function syncLegendWidth(): void {
   const boardRightEdgePx = (viewportWidth + boardVisibleSize) / 2;
   const leftPx = Math.round(boardRightEdgePx + desktopHudBoardGapPx);
   const rightPx = desktopHudMarginPx;
+  const availableHudWidthPx = Math.max(0, viewportWidth - rightPx - leftPx);
+  const useCompactDesktopHud =
+    availableHudWidthPx < compactDesktopHudMinWidthPx || viewportHeight <= compactDesktopHudMaxViewportHeightPx;
+  leaderboardPanel.classList.toggle('leaderboard-compact', useCompactDesktopHud);
+
   if (leftPx >= viewportWidth - rightPx) {
     leaderboardPanel.style.left = '';
     leaderboardPanel.style.right = `${rightPx}px`;

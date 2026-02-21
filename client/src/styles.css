@@ -413,6 +413,23 @@ li {
   min-width: 0;
 }
 
+.leaderboard.leaderboard-compact {
+  max-height: calc(100vh - 24px);
+  gap: 8px;
+}
+
+.leaderboard.leaderboard-compact .leaderboard-top,
+.leaderboard.leaderboard-compact .leaderboard-bottom {
+  max-height: calc((100vh - 96px) / 2);
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.leaderboard.leaderboard-compact #leaderboard-list.stats-list {
+  max-height: none;
+}
+
 .leaderboard h3 {
   margin: 0 0 8px;
   font-size: 14px;

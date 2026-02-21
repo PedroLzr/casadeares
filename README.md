@@ -105,13 +105,18 @@ Servicios:
 - Client (Vite): `http://localhost:5173`
 - Server (API/Socket): `http://localhost:3000`
 
-## Producción recomendada (client estático servido por server)
+## Producción con Docker Compose
 
 ```bash
 npm run docker:prod
 ```
 
-Se levanta un único contenedor en `http://localhost:3000`.
+Servicios:
+
+- Client (preview build): `http://localhost:5173`
+- Server (API/Socket): `http://localhost:3000`
+
+Opcional: definir `VITE_SERVER_URL` al levantar producción si no usarás `localhost`.
 
 ## Desarrollo local sin Docker
 

@@ -2,26 +2,26 @@ services:
   server:
     build:
       context: ./server
-      dockerfile: Dockerfile.dev
-    container_name: autobattler-server-dev
+      dockerfile: Dockerfile
+    container_name: autobattler-server
     environment:
       NODE_ENV: development
-      PORT: 3000
+      PORT: 3001
       CORS_ORIGIN: "*"
     volumes:
       - ./server:/app
       - /app/node_modules
     ports:
-      - "3000:3000"
+      - "3001:3001"
     command: npm run dev
 
   client:
     build:
       context: ./client
-      dockerfile: Dockerfile.dev
-    container_name: autobattler-client-dev
+      dockerfile: Dockerfile
+    container_name: autobattler-client
     environment:
-      VITE_PROXY_TARGET: http://server:3000
+      VITE_PROXY_TARGET: http://server:3001
     volumes:
       - ./client:/app
       - /app/node_modules
