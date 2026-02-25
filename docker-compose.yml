@@ -5,15 +5,12 @@ services:
       dockerfile: Dockerfile
     container_name: casadeares-server
     environment:
-      # NODE_ENV: development
       NODE_ENV: production
       PORT: 3001
       CORS_ORIGIN: "*"
     volumes:
       - ./server:/app
       - /app/node_modules
-    # ports:
-    #   - "3001:3001"
     command: npm run dev
 
   client:
